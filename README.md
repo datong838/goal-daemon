@@ -12,6 +12,7 @@
 git clone git@github.com:datong838/goal-daemon.git
 cd goal-daemon
 ./doctor.sh                    # 先看差什么（只读）
+./doctor.sh --fix              # 补齐空目录与示例队列（不动已有文件）
 cp goal-state/goal.md.template goal-state/goal.md
 $EDITOR goal-state/goal.md     # 改 OBJECTIVE 与 SCOPE_NOTE —— 这两行决定它干什么
 ./install.sh                   # 装成常驻（macOS 自带「终端」里跑）

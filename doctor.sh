@@ -54,11 +54,13 @@ done
 # ---------------------------------------------------------------- 2 状态目录
 echo
 echo "[2] 状态目录"
+dir_missing=0
 for d in "$STATE" "$STATE/logs" "$STATE/pkg"; do
   if [ -d "$d" ]; then :; else
-    [ "$FIX" = "1" ] && mkdir -p "$d" && ok "已创建 $d" || fail "缺少目录 $d"
+    [ "$FIX" = "1" ] && mkdir -p "$d" && ok "已创建 $d" || { fail "缺少目录 $d"; dir_missing=1; }
   fi
 done
+if [ "$dir_missing" = "1" ]; then hint "./doctor.sh --fix（补齐空目录，不动任何已有文件）"; fi
 if [ -w "$STATE" ]; then ok "可写：$STATE"; else fail "不可写：$STATE"; fi
 
 # ---------------------------------------------------------------- 3 配置
