@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  模板文件：不要直接 cp 到 ~/Library/LaunchAgents/。
+  install.sh 会把 __GOAL_DIR__ 和 __LABEL__ 替换成实际值后再安装。
+  服务名默认 local.goal-daemon（不含用户名/组织名），可用 GOAL_LABEL 环境变量覆盖。
+
+  只有一个绝对路径锚点：WorkingDirectory。
+  其余使用相对路径：
+    - 脚本路径 "goal-daemon.py" 由 python 在 chdir 之后按 cwd 解析；
+    - GOAL_STATE_DIR "goal-state" 由程序自身 resolve() 解析。
+  依据：man 5 launchd.plist —— Program 必须绝对；ProgramArguments[0] 的相对路径
+  走 _PATH_STDPATH（不是 cwd），所以相对路径只能出现在"交给 python 的参数"里。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <!-- 常驻前台进程：launchd 负责拉起与自愈，内部每 10 秒 tick 一次 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>goal-daemon.py</string>
+    <string>--loop</string>
+    <string>--interval</string>
+    <string>10</string>
+  </array>
+
+  <!-- 唯一绝对锚点：launchd 先 chdir 到此目录，再解析上面的相对脚本名 -->
+  <key>WorkingDirectory</key>
+  <string>__GOAL_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>GOAL_STATE_DIR</key>
+    <string>goal-state</string>
+    <!-- install.sh 注入：node 所在目录 + 系统默认 PATH。
+         codebuddy 是 node 脚本，launchd 的默认 PATH 里没有 node。 -->
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- launchd 在 chdir 之前打开日志文件，故仍用绝对路径（安装时注入） -->
+  <key>StandardOutPath</key>
+  <string>__GOAL_DIR__/goal-state/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__GOAL_DIR__/goal-state/logs/launchd.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>5</integer>
+</dict>
+</plist>

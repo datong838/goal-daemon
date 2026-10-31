@@ -1,0 +1,32 @@
+{
+  "updated_at": "2026-10-31T00:00:00+08:00",
+  "note": "示例格式。workdir/write_scope 是通用占位目录 /tmp/goal-pilot，用前改成你自己的；install.sh 首次安装会把它复制成 queue.json 并自动创建该目录。状态：pending|ready|in_progress|delivered|blocked|done",
+  "packages": [
+    {
+      "id": "pkg-001",
+      "title": "示例：写一个说明文件",
+      "instruction": "在试点目录创建 hello.md，写清本循环的用途与停机方式。",
+      "workdir": "/tmp/goal-pilot",
+      "write_scope": ["/tmp/goal-pilot"],
+      "checks": ["文件存在且内容非空", "不新增其他文件"],
+      "deps": [],
+      "status": "pending",
+      "fail_count": 0,
+      "token_budget": "none",
+      "timeout_s": 1800
+    },
+    {
+      "id": "pkg-002",
+      "title": "示例：依赖 pkg-001 的后续包",
+      "instruction": "在 hello.md 追加「停机步骤」小节。",
+      "workdir": "/tmp/goal-pilot",
+      "write_scope": ["/tmp/goal-pilot"],
+      "checks": ["只改 hello.md"],
+      "deps": ["pkg-001"],
+      "status": "pending",
+      "fail_count": 0,
+      "token_budget": "none",
+      "timeout_s": 1800
+    }
+  ]
+}

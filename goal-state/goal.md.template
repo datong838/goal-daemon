@@ -1,0 +1,91 @@
+# Goal（唯一目标来源）
+
+daemon 每个 tick 解析本文件的 `KEY: value` 行；改这里即可调整行为，无需改代码。
+本文件是模板：`install.sh` 在没有 goal.md 时复制它，然后你只改下面两行。
+
+OBJECTIVE: <在这里写你要它持续做成的事，一句话。建议直接把需求原话贴过来>
+SCOPE_NOTE: <能改哪里、绝不能碰什么。例：工作目录其余部分只读；唯一可写 runs/ ；禁止 git 操作>
+# 受保护根：逗号分隔的绝对路径。任何 workdir 或 write_scope 落在这里面的包，
+# 派发时一律拒派并置 held（不是提示，是硬闸）。留空或写 none 即关闭。
+# 用途：某个仓你说"别再动了"，但队列里还留着它的包——人不在场时没人拦得住，
+# 所以闸必须放在引擎里。恢复只需删掉这一行，held 包会自动放回 ready。
+PROTECTED_ROOTS: none
+
+# 引擎选择：
+#   ENGINE: auto      -> 开机不用人工决定：wbrun 可用就用它，否则 codebuddy，再否则 http；都没有就安静等待
+#   ENGINE: wbrun     -> 通过 WorkBuddy 桌面会话网关提交 run，免登录复用已登录账号（有 WorkBuddy 时首选）
+#   ENGINE: codebuddy -> 直接拉起内核 CLI（需要 ~/.credentials.json，即 /login 浏览器授权一次）
+#   ENGINE: http      -> self-built agent loop（任意 OpenAI 兼容端点，如自建 new-api / ollama）
+#   ENGINE: custom    -> 你自己的 engine-custom.sh
+ENGINE: auto
+
+# —— wbrun 后端（WorkBuddy 会话网关，免登录）——
+# 密码来源：goal-state/gateway.token（桌面重启后若 AUTH_REQUIRED，引擎会从桌面进程环境重新提取）
+# 网关端口自动发现（扫本机 LISTEN 端口认 /api/v1/status 的 activeSessionId 响应），无需配置。
+# 注意：run 在会话空闲时执行——当前对话框正在干活时，提交的任务会排队，属正常现象。
+WBRUN_TIMEOUT_S: 3600
+WBRUN_POLL_S: 10
+WBRUN_OUTPUT_GRACE_S: 300
+
+# —— http 后端（ENGINE: http，或 auto 的兜底）——
+# 本机 new-api/subapi 常用 :3000，ollama 用 :11434/v1；端点没起时 auto 会跳过，不算失败。
+ENGINE_BASE_URL: http://127.0.0.1:3000/v1
+ENGINE_MODEL: gpt-4o-mini
+ENGINE_API_KEY:
+ENGINE_MAX_STEPS: 24
+
+# —— codebuddy 后端（WorkBuddy 自己的模型）——
+# 唯一前提：登录一次。CLI 有独立凭据 ~/.credentials.json，不读 GUI 的登录态，
+# 所以未登录时引擎返回 92，daemon 记为 waiting（包保持 ready，不累计失败、不熔断）。
+#   ./login.sh  -> 进 TUI 执行 /login（同一个 WorkBuddy 账号，授权一次即可）
+# 登录后每个 tick 都用 WorkBuddy 账号额度跑，不需要再管。
+# CODEBUDDY_MODEL: <留空 = 跟随账号默认模型>
+# CODEBUDDY_BIN: <留空即可，默认用 WorkBuddy.app 内置 CLI（自动探测安装位置）>
+# CODEBUDDY_NODE_BIN: <留空即可，engine.sh 会自动探测 node>
+# CODEBUDDY_PORT: 59187            # 需避开 GUI 占用的端口，否则 EADDRINUSE
+# CODEBUDDY_PERMISSION_MODE: bypassPermissions   # 无人值守需跑命令；收紧可改 acceptEdits
+# CODEBUDDY_TOOLS: Read,Write,Edit,Bash,Glob,Grep
+
+# 串行流水线：下游包要等上游达到这些状态才派发。
+#   delivered,done -> 引擎交付即算过（默认，全自动串行，不需要人工看着）
+#   done           -> 只认人工放行（每包都要 ./review.sh <id> done 才推下一步，适合要求高/易错的任务）
+# 注意：引擎跑成功后的状态是 delivered；done 只能由 review.sh 或人工置入。
+DEPS_REQUIRE: delivered,done
+
+# —— 回流（Loop 闭环）——
+# 队列跑空以后怎么办。这是本工具"批处理"与"Loop"的分界：
+#   off -> 纯批处理：queue 里预置什么跑什么，跑完 idle，剩下的问题永远留在汇报里
+#   on  -> Loop：每包交付后，自动读它的 <id>.last.md，把「仍未修」长成下一包
+# 新包 id 形如 vd-003-f1，deps 指回父包，写界继承父包，指令里逐条列出遗留项。
+FOLLOWUP: on
+# 自动追之前，父包要不要先被人审放行（status=done）。
+#   on  -> 每包都要 ./review.sh <id> done 才推下一步（有人看着的场合）
+#   off -> 默认：引擎交付即算放行，下一包直接排，不再等人
+FOLLOWUP_REQUIRE_DONE: off
+# 自动追的最大层数。0 = 不限层（一直 Loop 下去）。
+# 停下来的判据：no_progress（原地打转）、clean（没遗留了）、STOP 文件、MAX_FAIL。
+FOLLOWUP_MAX_DEPTH: 0
+# 原地打转自动停：新抽出的遗留项若逐条与父包当初被派的项几乎同文（≥0.9），
+# 说明上一包没推进，再派只是重复同一批活。这是进展判据，不是审批。
+FOLLOWUP_NO_PROGRESS: on
+# 做不动的项（真人走查、真机触摸、缺身份源、缺上游文件、需人拍板的决策）
+# 不派包，只记账到 goal-state/blocked.md。on 是默认：机器承认自己干不了，
+# 不拿一个预算周期去换一页"做不了"。这不是审批，没有任何人要点头。
+FOLLOWUP_PARK: on
+# 某条已经修好了，但不想改历史汇报？在 goal-state/pkg/<id>.recheck.md 里写一行：
+#   RESOLVED: <那条遗留项的文字>
+# 回流时会自动扣掉，不再派。
+
+MAX_FAIL: 3
+MAX_PKG_SECONDS: 3000
+HEARTBEAT_STALE_SECONDS: 90
+BUDGET_DAILY_TOKENS: none
+BUDGET_PKG_TOKENS: none
+NOTIFY: none
+
+# 说明
+# - 预算默认不限制；通知默认不发送（只落盘 logs）。
+# - 退出码语义：0 成功；92 后端不可用；93 无可用后端。92/93 都算"等待"——包退回 ready，不计失败、不熔断。
+# - auto 的选择顺序在 engine.sh 里实现，仅做只读探测（文件存在 + TCP 连通），不产生模型调用。
+# - .need-login 标记超过 2 小时自动作废，避免你登录成功后 auto 仍一直绕过 codebuddy。
+# - 修改 OBJECTIVE 时逐字保留要求原文，不要自行加预算或扩大范围。

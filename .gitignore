@@ -1,0 +1,32 @@
+# ── 运行数据：含凭证、本机路径、真实项目内容，一律不进仓库 ──────────────
+goal-state/*
+!goal-state/goal.md.template
+!goal-state/queue.example.json
+
+# 网关凭证与端口（一旦泄露等于把本机 agent 借给别人用）
+*.token
+gateway.port
+session.id
+
+# ── 测试/探测的临时目录 ────────────────────────────────────────────────
+.regress/
+.guard/
+.smoke/
+.auto-test/
+.doctor-probe/
+__pycache__/
+*.pyc
+.tick.lock
+
+# ── 打包产物 ──────────────────────────────────────────────────────────
+dist/
+*.tar.gz
+
+# ── 本机与某具体项目的联调夹具（含真实路径，不适合公开） ────────────────
+demo-mrpmes/
+# demo 只留 mock 端点脚本，运行产物由 demo-run.sh 自己重建
+demo/*
+!demo/mock_openai.py
+
+# ── 系统 ──────────────────────────────────────────────────────────────
+.DS_Store
