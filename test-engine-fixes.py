@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -351,6 +352,117 @@ def t_followup_closed_section():
     check("部分完成仍要抽（≥1 项）", len(got) >= 1, f"抽到 {len(got)} 项")
 
 
+def _orphan_state(tmp: str, with_output: bool):
+    """造一个"锁还在、进程已死、无 exit 文件"的状态目录。"""
+    st = Path(tmp)
+    (st / "pkg").mkdir(parents=True, exist_ok=True)
+    (st / "logs").mkdir(parents=True, exist_ok=True)
+    (st / "goal.md").write_text("ENGINE: custom\nMAX_FAIL: 3\n", encoding="utf-8")
+    (st / "queue.json").write_text(json.dumps({"packages": [{
+        "id": "t-o", "title": "t", "instruction": "t", "workdir": "/tmp",
+        "write_scope": [], "checks": [], "deps": [], "status": "in_progress",
+        "fail_count": 0, "token_budget": "none", "timeout_s": 60,
+    }]}, ensure_ascii=False), encoding="utf-8")
+    started = time.time() - 10
+    (st / "lock.json").write_text(json.dumps({
+        "pid": 999999, "pkg_id": "t-o", "started_at": "x", "started_epoch": started,
+    }), encoding="utf-8")
+    if with_output:
+        (st / "pkg" / "t-o.last.md").write_text("引擎跑完了，但没写退出码\n", encoding="utf-8")
+        os.utime(st / "pkg" / "t-o.last.md", (started + 5, started + 5))
+    return st
+
+
+def t_daemon_orphan_with_output():
+    """G：进程没了、没 exit 文件，但产出属本轮 → 判完成，不能判失联。
+
+    真实事故：用 engine-custom.sh（给用户的模板，不写 exit 文件）跑 demo，
+    last.md 明明已在磁盘上，第二拍却被当"会话失联"，fail_count 被加到 1。
+    按模板写引擎的人第一次跑就会看到这个。
+    """
+    tmp = tempfile.mkdtemp(prefix="fix-g-")
+    try:
+        st = _orphan_state(tmp, with_output=True)
+        p = subprocess.run([sys.executable, str(DAEMON), "--state-dir", str(st), "--once"],
+                           capture_output=True, text=True, timeout=60)
+        pkg = json.loads((st / "queue.json").read_text(encoding="utf-8"))["packages"][0]
+        log = "".join(f.read_text(encoding="utf-8")
+                      for f in (st / "logs").glob("*.log"))
+        check("有本轮产出 → status=done", pkg["status"] == "done", pkg["status"])
+        check("有本轮产出 → fail_count 不加", pkg["fail_count"] == 0, pkg["fail_count"])
+        check("记 collected_by_output", "collected_by_output" in log, log[-160:])
+        check("不记 takeover（没有误判失联）", "takeover" not in log, log[-160:])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_daemon_orphan_without_output():
+    """对照组：真没产出，仍须判失联并计失败。"""
+    tmp = tempfile.mkdtemp(prefix="fix-g2-")
+    try:
+        st = _orphan_state(tmp, with_output=False)
+        subprocess.run([sys.executable, str(DAEMON), "--state-dir", str(st), "--once"],
+                       capture_output=True, text=True, timeout=60)
+        pkg = json.loads((st / "queue.json").read_text(encoding="utf-8"))["packages"][0]
+        check("无产出 → fail_count=1", pkg["fail_count"] == 1, str(pkg["fail_count"]))
+        check("无产出 → 状态回 ready（未到上限）", pkg["status"] == "ready", pkg["status"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_engine_path_relative():
+    """H：--engine 给相对路径也要能起（原先原样传给 Popen，FileNotFoundError）。
+
+    新机器最常见的用法就是 `--engine ./engine-custom.sh`。相对路径按本脚本
+    目录解析，而不是靠子进程的 cwd。
+    """
+    tmp = tempfile.mkdtemp(prefix="fix-h-")
+    try:
+        st = Path(tmp)
+        (st / "pkg").mkdir(parents=True, exist_ok=True)
+        (st / "logs").mkdir(parents=True, exist_ok=True)
+        (st / "goal.md").write_text("ENGINE: custom\nMAX_FAIL: 3\n", encoding="utf-8")
+        (st / "queue.json").write_text(json.dumps({"packages": [{
+            "id": "t-h", "title": "t", "instruction": "t", "workdir": "/tmp",
+            "write_scope": [], "checks": [], "deps": [], "status": "ready",
+            "fail_count": 0, "token_budget": "none", "timeout_s": 60,
+        }]}, ensure_ascii=False), encoding="utf-8")
+        p = subprocess.run([sys.executable, str(DAEMON), "--state-dir", str(st),
+                            "--once", "--engine", "./engine-custom.sh"],
+                           capture_output=True, text=True, timeout=60, cwd=str(HERE))
+        pkg = json.loads((st / "queue.json").read_text(encoding="utf-8"))["packages"][0]
+        check("相对路径引擎能起（没崩在 Popen）",
+              "FileNotFoundError" not in p.stderr, p.stderr[-160:])
+        check("包进入 in_progress（已派出去）", pkg["status"] == "in_progress", pkg["status"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_engine_missing_is_blocked():
+    """H2：引擎文件不存在 → 启不来要置 blocked 并说原因，不能留 in_progress。"""
+    tmp = tempfile.mkdtemp(prefix="fix-h2-")
+    try:
+        st = Path(tmp)
+        (st / "pkg").mkdir(parents=True, exist_ok=True)
+        (st / "logs").mkdir(parents=True, exist_ok=True)
+        (st / "goal.md").write_text("ENGINE: custom\nMAX_FAIL: 3\n", encoding="utf-8")
+        (st / "queue.json").write_text(json.dumps({"packages": [{
+            "id": "t-h2", "title": "t", "instruction": "t", "workdir": "/tmp",
+            "write_scope": [], "checks": [], "deps": [], "status": "ready",
+            "fail_count": 0, "token_budget": "none", "timeout_s": 60,
+        }]}, ensure_ascii=False), encoding="utf-8")
+        p = subprocess.run([sys.executable, str(DAEMON), "--state-dir", str(st),
+                            "--once", "--engine", str(st / "no-such-engine.sh")],
+                           capture_output=True, text=True, timeout=60)
+        pkg = json.loads((st / "queue.json").read_text(encoding="utf-8"))["packages"][0]
+        check("缺引擎 → 退出码非 0", p.returncode != 0, str(p.returncode))
+        check("缺引擎 → 明确提示路径", "引擎不存在" in (p.stderr or "") + (p.stdout or ""),
+              (p.stderr or "")[-160:])
+        check("缺引擎 → 包没被留在 in_progress", pkg["status"] != "in_progress", pkg["status"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     print("A/B. 超时分支认不认已落盘的产出")
     t_engine_timeout_with_output()
@@ -368,6 +480,13 @@ def main():
     t_followup_closed_section()
     print("F. 审批模式仍能退回 delivered")
     t_daemon_review_on_keeps_delivered()
+    print("G. 进程没了但产出在：按完成收包，不判失联")
+    t_daemon_orphan_with_output()
+    print("对照. 真没产出仍判失联")
+    t_daemon_orphan_without_output()
+    print("H. --engine 相对路径 / 文件不存在")
+    t_engine_path_relative()
+    t_engine_missing_is_blocked()
     print(f"\n结果：{len(PASS)} passed, {len(FAIL)} failed")
     return 1 if FAIL else 0
 

@@ -250,12 +250,20 @@ def _clear_wait(pkg: dict) -> None:
 # ---------------------------------------------------------------- 收包
 
 
-def collect(state_dir: Path, queue: dict, pkg_id: str, max_fail: int, auto_accept: bool = False) -> None:
+def collect(
+    state_dir: Path,
+    queue: dict,
+    pkg_id: str,
+    max_fail: int,
+    auto_accept: bool = False,
+    code: int = None,
+) -> None:
     exit_file = state_dir / "pkg" / f"{pkg_id}.exit"
-    try:
-        code = int(exit_file.read_text(encoding="utf-8").strip() or "-1")
-    except (FileNotFoundError, ValueError):
-        code = -1
+    if code is None:
+        try:
+            code = int(exit_file.read_text(encoding="utf-8").strip() or "-1")
+        except (FileNotFoundError, ValueError):
+            code = -1
 
     lock = read_json(state_dir / "lock.json", {}) or {}
     duration = int(time.time() - float(lock.get("started_epoch", time.time())))
@@ -466,7 +474,23 @@ def tick(state_dir: Path, dry_run: bool, engine: Path) -> None:
             )
             return
 
-        # 无 exit 文件 = 会话失联
+        # 没有 exit 文件，但产出是本轮的 → 引擎其实干完了，只是没写退出码。
+        # engine-custom.sh 这类给用户的模板就不写 exit，靠"进程消失"收包；
+        # 若这里直接判失联，每个按模板写引擎的人第一次跑都会看到 fail=1，
+        # 而 last.md 明明已经在磁盘上。同 engine-wbrun.sh 的 fresh_output 一个道理。
+        last_md = state_dir / "pkg" / f"{pkg_id}.last.md"
+        started = float(lock.get("started_epoch") or 0)
+        if last_md.is_file() and started and last_md.stat().st_mtime >= started:
+            log(state_dir, "collected_by_output", pkg_id=pkg_id,
+                note="无退出码，但产出属本轮")
+            if dry_run:
+                print(f"[dry-run] {pkg_id} 产出已落盘（未写退出码），会按完成收包")
+            else:
+                collect(state_dir, queue, pkg_id, max_fail,
+                        auto_accept=auto_accept, code=0)
+            return
+
+        # 无 exit 文件、也没有本轮产出 = 会话失联
         elapsed = int(time.time() - float(lock.get("started_epoch", time.time())))
         log(state_dir, "takeover", pkg_id=pkg_id, pid=pid, elapsed_s=elapsed)
         if dry_run:
@@ -629,14 +653,26 @@ def tick(state_dir: Path, dry_run: bool, engine: Path) -> None:
     logdir = state_dir / "logs"
     ensure_dir(logdir)
     out = (logdir / f"engine-{pkg_id}.out").open("ab")
-    proc = subprocess.Popen(
-        [str(engine), pkg_id],
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=out,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,  # 脱离 launchd job 的进程组，daemon 退出不影响引擎
-    )
+    try:
+        proc = subprocess.Popen(
+            [str(engine), pkg_id],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,  # 脱离 launchd job 的进程组，daemon 退出不影响引擎
+        )
+    except OSError as exc:
+        # 引擎起不来（路径错 / 没有执行权限 / 缺解释器）。包绝不能留在 in_progress：
+        # 那样它既不在跑，又占着"在跑"，后面每拍的空闲判断都会被它骗过去。
+        out.close()
+        pkg["status"] = "blocked"
+        pkg["blocked_reason"] = f"engine 起不来：{exc}"
+        pkg["blocked_at"] = now_iso()
+        write_json_atomic(state_dir / "queue.json", queue)
+        log(state_dir, "spawn_failed", pkg_id=pkg_id, engine=str(engine), error=str(exc))
+        notify(state_dir, "spawn_failed", f"{pkg_id} 引擎起不来：{exc}")
+        return
     write_json_atomic(
         state_dir / "lock.json",
         {"pid": proc.pid, "pkg_id": pkg_id, "started_at": now_iso(), "started_epoch": time.time()},
@@ -663,6 +699,17 @@ def main() -> int:
         return 2
     ensure_dir(state_dir / "logs")
     ensure_dir(state_dir / "pkg")
+
+    # 引擎路径：相对路径按本脚本目录解析，再转绝对。
+    # 否则 `--engine ./engine-custom.sh` 会原样传给 Popen，而子进程的工作目录
+    # 不一定还是当前目录 —— 实测直接 FileNotFoundError，包卡在 in_progress。
+    eng = Path(args.engine).expanduser()
+    if not eng.is_absolute():
+        eng = (SCRIPT_DIR / eng).resolve()
+    if not eng.is_file():
+        print(f"引擎不存在：{eng}\n（--engine 给绝对路径，或相对本脚本目录的路径）", file=sys.stderr)
+        return 2
+    args.engine = str(eng)
 
     if args.loop:
         import signal
