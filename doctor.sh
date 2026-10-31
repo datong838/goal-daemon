@@ -71,6 +71,9 @@ if [ -f "$CFG" ]; then
   ok "ENGINE: $ENGINE"
 else
   fail "缺少 $CFG"; ENGINE=""
+  if [ -f "$STATE/goal.md.template" ]; then
+    hint "./install.sh（会从 goal.md.template 生成，再改里面的 OBJECTIVE）；只想先试跑就 cp goal-state/goal.md.template goal-state/goal.md"
+  fi
 fi
 
 CB="${CODEBUDDY_BIN:-$(goal_detect_cli 2>/dev/null || true)}"

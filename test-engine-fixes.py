@@ -273,9 +273,20 @@ def t_daemon_review_on_keeps_delivered():
 
 
 def t_config_values():
-    """超时预算与宽限是否真的落在配置里（改代码不改配置等于没改）。"""
+    """超时预算与宽限是否真的落在配置里（改代码不改配置等于没改）。
+
+    读 **template** 而不是 goal.md：仓库该保证的是"出厂默认值对"，
+    因为 install.sh 在没有 goal.md 时正是从 template 复制。读某台机器上的
+    goal.md 会让这个测试在干净 clone 里直接崩（曾真实发生：新机器第一次
+    跑测试就 FileNotFoundError），而且本机改过的值不能代表默认行为。
+    """
+    tpl = HERE / "goal-state" / "goal.md.template"
     md = HERE / "goal-state" / "goal.md"
-    txt = md.read_text(encoding="utf-8")
+    src = tpl if tpl.exists() else md
+    if not src.exists():
+        check("配置文件存在（goal.md.template）", False, f"{tpl} 与 {md} 都没有")
+        return
+    txt = src.read_text(encoding="utf-8")
     t = re.search(r"^WBRUN_TIMEOUT_S:\s*(\d+)", txt, re.M)
     g = re.search(r"^WBRUN_OUTPUT_GRACE_S:\s*(\d+)", txt, re.M)
     check("WBRUN_TIMEOUT_S >= 3600", bool(t) and int(t.group(1)) >= 3600,

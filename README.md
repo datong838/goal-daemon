@@ -6,6 +6,24 @@
 > **完整操作手册见 [使用说明.md](使用说明.md)**（安装、任务包怎么写、排错、原理全在里面）。
 > 本文只做快速入口。
 
+## 换一台电脑
+
+```bash
+git clone git@github.com:datong838/goal-daemon.git
+cd goal-daemon
+./doctor.sh                    # 先看差什么（只读）
+cp goal-state/goal.md.template goal-state/goal.md
+$EDITOR goal-state/goal.md     # 改 OBJECTIVE 与 SCOPE_NOTE —— 这两行决定它干什么
+./install.sh                   # 装成常驻（macOS 自带「终端」里跑）
+./status.sh
+```
+
+`goal.md` 是**运行时配置**，引擎代码里没有任何项目名。目标、工作目录、写界、
+受保护根全在这个文件里，换项目只改它。
+
+**平台**：目前只支持 macOS（靠 `launchd` 常驻）。Linux 需要改写成 systemd unit，
+Windows 需 WSL。引擎脚本本身是 bash + python3，移植不难，但安装器没做。
+
 ---
 
 ## 一分钟上手
