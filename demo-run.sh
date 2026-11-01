@@ -42,7 +42,10 @@ for i in (1, 2, 3):
 json.dump({"packages": pkgs}, open(q, "w"), ensure_ascii=False, indent=2)
 PY
 
-/usr/bin/python3 "$DEMO/mock_openai.py" > "$DEMO/mock.log" 2>&1 &
+# nohup：这两个进程必须比本脚本活得久。在 WorkBuddy 集成终端、IDE 任务终端这类
+# 会被工具托管的地方，脚本一退出，它起的后台子进程常常被整组回收——现象是
+# "演示没反应"：mock 和 daemon 一起消失，队列停在 in_progress。
+nohup /usr/bin/python3 "$DEMO/mock_openai.py" > "$DEMO/mock.log" 2>&1 &
 echo $! > "$DEMO/mock.pid"
 
 # 等 mock 真的能连上再起 daemon。原来固定 sleep 1：python 冷启动慢一点、
@@ -62,7 +65,7 @@ done
 
 # --state-dir 显式传：命令行里带上演示目录，demo-stop.sh 才能只杀演示进程，
 # 不会连生产 daemon 一起 pkill 掉。
-/usr/bin/python3 "$DIR/goal-daemon.py" --loop --interval 10 --state-dir "$STATE" \
+nohup /usr/bin/python3 "$DIR/goal-daemon.py" --loop --interval 10 --state-dir "$STATE" \
   > "$DEMO/daemon.out" 2>&1 &
 echo $! > "$DEMO/daemon.pid"
 
