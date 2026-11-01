@@ -44,9 +44,25 @@ PY
 
 /usr/bin/python3 "$DEMO/mock_openai.py" > "$DEMO/mock.log" 2>&1 &
 echo $! > "$DEMO/mock.pid"
-sleep 1
 
-GOAL_STATE_DIR="$STATE" /usr/bin/python3 "$DIR/goal-daemon.py" --loop --interval 10 \
+# 等 mock 真的能连上再起 daemon。原来固定 sleep 1：python 冷启动慢一点、
+# 或者上个演示的端口没退干净，第一拍就 502，看起来像引擎坏了。
+ready=0
+for _ in $(seq 1 50); do
+  if /usr/bin/python3 - <<'PY' 2>/dev/null
+import socket, sys
+s = socket.socket()
+s.settimeout(0.3)
+sys.exit(0 if s.connect_ex(("127.0.0.1", 18998)) == 0 else 1)
+PY
+  then ready=1; break; fi
+  sleep 0.2
+done
+[ "$ready" = 1 ] || echo "警告：mock 端点 18998 起不来（看 demo/mock.log），第一拍会失败" >&2
+
+# --state-dir 显式传：命令行里带上演示目录，demo-stop.sh 才能只杀演示进程，
+# 不会连生产 daemon 一起 pkill 掉。
+/usr/bin/python3 "$DIR/goal-daemon.py" --loop --interval 10 --state-dir "$STATE" \
   > "$DEMO/daemon.out" 2>&1 &
 echo $! > "$DEMO/daemon.pid"
 

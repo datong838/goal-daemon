@@ -9,8 +9,10 @@
 ## 换一台电脑
 
 ```bash
-git clone git@github.com:datong838/goal-daemon.git
+git clone git@github.com:datong838/goal-daemon.git      # 仓库是公开的，用 https 也行，不必配 key
 cd goal-daemon
+./demo-run.sh                  # 可选：先看它怎么跑（mock 端点，零额度，约 40 秒三包链）
+./demo-stop.sh                 # 看完停掉
 ./doctor.sh                    # 先看差什么（只读）
 ./doctor.sh --fix              # 补齐空目录与示例队列（不动已有文件）
 cp goal-state/goal.md.template goal-state/goal.md
@@ -18,6 +20,9 @@ $EDITOR goal-state/goal.md     # 改 OBJECTIVE 与 SCOPE_NOTE —— 这两行�
 ./install.sh                   # 装成常驻（macOS 自带「终端」里跑）
 ./status.sh
 ```
+
+`OBJECTIVE` 还是模板占位时 `install.sh` 会**拒绝安装**（`FORCE=1` 可绕过）：
+装了之后守护进程会拿示例队列真跑一遍，用真额度换一页"示例做完了"，没人要这个结果。
 
 `goal.md` 是**运行时配置**，引擎代码里没有任何项目名。目标、工作目录、写界、
 受保护根全在这个文件里，换项目只改它。
@@ -221,13 +226,16 @@ goal-state/       运行时状态（唯一事实源）
 ## 测试
 
 ```bash
-/usr/bin/python3 test-regressions.py        # 12 项：状态机与护栏
-/usr/bin/python3 test-codebuddy-backend.py  # 18 项：codebuddy 后端
+/usr/bin/python3 test-guard.py              # 34 项：护栏（受保护根/写界/引擎不认业务名）
+/usr/bin/python3 test-regressions.py        # 34 项：状态机、退避、代理、demo 不误伤生产
+/usr/bin/python3 test-followup.py           # 58 项：回流层（解析/闸门/深度/幂等）
+/usr/bin/python3 test-engine-fixes.py       # 33 项：超时认产出 / 残留旧产出 / 已交付不重派
 /usr/bin/python3 test-auto-backend.py       # 12 项：auto 选路
-/usr/bin/python3 test-followup.py           # 23 项：回流层（解析/闸门/深度/幂等）
-/usr/bin/python3 test-engine-fixes.py       # 13 项：超时认产出 / 残留旧产出 / 已交付不重派
+/usr/bin/python3 test-codebuddy-backend.py  # 18 项：codebuddy 后端
 /usr/bin/python3 smoke-e2e.py               # 端到端冒烟（mock 端点，零成本）
 ```
+
+合计 189 项，全绿；`smoke-e2e.py` 另外走一遍真实调度。全部零额度：不联网、不调模型。
 
 ### 失败判定的三条硬规则
 

@@ -55,6 +55,21 @@ if [ ! -f "$DIR/goal-state/goal.md" ] && [ -f "$DIR/goal-state/goal.md.template"
   cp "$DIR/goal-state/goal.md.template" "$DIR/goal-state/goal.md"
   echo "已从 goal.md.template 生成配置 —— 记得改 OBJECTIVE 与 SCOPE_NOTE"
 fi
+
+# OBJECTIVE 还是占位就停手。装了之后再改不算错，但那一刻守护进程已经拿示例队列
+# 去跑了——用真额度换一页"这个示例包做完了"，没人想要这个结果。
+if [ "${FORCE:-0}" != "1" ]; then
+  OBJ="$(/usr/bin/grep -E '^OBJECTIVE:' "$DIR/goal-state/goal.md" 2>/dev/null | head -1 | sed 's/^OBJECTIVE:[[:space:]]*//')"
+  case "$OBJ" in
+    ""|*"<"*">"*)
+      echo "OBJECTIVE 还是模板占位，先别装。" >&2
+      echo "  编辑 $DIR/goal-state/goal.md，把 OBJECTIVE 写成一句具体目标，" >&2
+      echo "  再跑一次 ./install.sh。只想先看它怎么跑：./demo-run.sh（不碰真额度）。" >&2
+      echo "  坚持要装：FORCE=1 ./install.sh" >&2
+      exit 2
+      ;;
+  esac
+fi
 mkdir -p "$(dirname "$PLIST_DST")"
 
 # 首次安装：没有队列就按示例初始化（已有则不覆盖，避免清掉正在跑的任务）

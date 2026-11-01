@@ -71,6 +71,16 @@ if [ -f "$CFG" ]; then
   ENGINE="$(/usr/bin/grep -E '^ENGINE:' "$CFG" 2>/dev/null | head -1 | sed 's/^ENGINE:[[:space:]]*//;s/[[:space:]]*$//')"
   ENGINE="${ENGINE:-http}"
   ok "ENGINE: $ENGINE"
+  # OBJECTIVE 还是模板占位就等于"没人告诉它干什么"。这时守护进程照样会跑，
+  # 拿着示例队列去消耗真额度——所以在这里拦住，而不是等它跑完一页再问。
+  OBJ="$(/usr/bin/grep -E '^OBJECTIVE:' "$CFG" 2>/dev/null | head -1 | sed 's/^OBJECTIVE:[[:space:]]*//')"
+  case "$OBJ" in
+    ""|*"<"*">"*)
+      fail "OBJECTIVE 还是模板占位 —— 它不知道该干什么"
+      hint "编辑 $CFG，把 OBJECTIVE 写成一个具体目标（一句人话，不要把需求缩写）"
+      ;;
+    *) ok "OBJECTIVE 已填写（$(printf '%s' "$OBJ" | cut -c1-40)…）" ;;
+  esac
 else
   fail "缺少 $CFG"; ENGINE=""
   if [ -f "$STATE/goal.md.template" ]; then

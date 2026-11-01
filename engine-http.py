@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -201,12 +202,40 @@ def dispatch(name: str, args: dict) -> str:
 
 # ---------------------------------------------------------------- HTTP
 
+_LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _is_loopback(url: str) -> bool:
+    """判断目标是否在本机。urllib 默认读 HTTP_PROXY —— 而 WorkBuddy 集成终端等
+    环境会注入代理变量，请求 127.0.0.1 也被送去代理，结果是 502
+    "upstream connect failed: Connection refused"，看起来像端点没起，极难查。
+    curl 那边一直带 --noproxy '*'，这里必须对齐。"""
+    try:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in _LOOPBACK or host.startswith("127.") or host.endswith(".local")
+
+
+_OPENERS: dict = {}
+
+
+def _opener(url: str):
+    direct = _is_loopback(url)
+    if direct not in _OPENERS:
+        if direct:
+            _OPENERS[direct] = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        else:
+            _OPENERS[direct] = urllib.request.build_opener()
+    return _OPENERS[direct]
+
 
 def chat(messages: list) -> dict:
     payload = {"model": MODEL, "messages": messages, "tools": TOOLS, "tool_choice": "auto"}
     data = json.dumps(payload).encode("utf-8")
+    url = BASE_URL + "/chat/completions"
     req = urllib.request.Request(
-        BASE_URL + "/chat/completions",
+        url,
         data=data,
         headers={
             "Content-Type": "application/json",
@@ -214,7 +243,7 @@ def chat(messages: list) -> dict:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=SHELL_TIMEOUT) as resp:
+    with _opener(url).open(req, timeout=SHELL_TIMEOUT) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 

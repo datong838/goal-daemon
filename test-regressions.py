@@ -162,6 +162,44 @@ qq = queue()
 gd.collect(st, qq, "c-02", 3, auto_accept=True)
 check("成功后退避状态清空", "wait_until" not in queue()["packages"][0])
 
+print("\nE. engine-http：本机端点不走代理")
+# 现象：在 WorkBuddy 集成终端等注入了 HTTP_PROXY 的环境里跑 ENGINE: http 或
+# demo-run.sh，urllib 会把 127.0.0.1 的请求也送去代理，返回
+# 502 upstream connect failed: Connection refused —— 看着像端点没起，极难查。
+_http_src = (ROOT / "engine-http.py").read_text(encoding="utf-8")
+check("有回环判定", "_is_loopback" in _http_src)
+check("对本机禁用代理", "ProxyHandler({})" in _http_src)
+check("chat 走自建 opener", "_opener(url).open(" in _http_src)
+check("没有裸 urlopen", "urllib.request.urlopen(req" not in _http_src)
+
+_espec = _ilu.spec_from_file_location("eh", ROOT / "engine-http.py")
+eh = _ilu.module_from_spec(_espec)
+_espec.loader.exec_module(eh)
+check("127.0.0.1 判为本机", eh._is_loopback("http://127.0.0.1:18998/v1/chat/completions"))
+check("localhost 判为本机", eh._is_loopback("http://localhost:3000/v1"))
+check("127.0.0.5 判为本机", eh._is_loopback("http://127.0.0.5:8080/"))
+check("外网不误判", not eh._is_loopback("https://api.openai.com/v1"))
+check("本机 opener 无代理",
+      not eh._opener("http://127.0.0.1:18998/v1").handlers
+      or all(not isinstance(h, __import__("urllib.request", fromlist=["x"]).ProxyHandler)
+             for h in eh._opener("http://127.0.0.1:18998/v1").handlers))
+
+print("\nF. demo 脚本不得误伤生产 daemon")
+# launchd 装的就是 `goal-daemon.py --loop --interval 10`。demo-stop.sh 早期用
+# pkill -f "goal-daemon.py --loop" 兜底，在已安装的机器上跑一次演示清理，
+# 生产守护进程就被一起杀掉。演示进程必须靠 --state-dir 带出自己的路径来区分。
+_dstop = (ROOT / "demo-stop.sh").read_text(encoding="utf-8")
+_drun = (ROOT / "demo-run.sh").read_text(encoding="utf-8")
+_dstop_code = "\n".join(
+    ln for ln in _dstop.splitlines() if not ln.lstrip().startswith("#")
+)
+check("demo-stop 不带裸 pkill", 'pkill -f "goal-daemon.py --loop"' not in _dstop_code)
+check("demo-stop 用 --state-dir 区分", "--state-dir" in _dstop)
+check("demo-run 启动带 --state-dir", "--state-dir" in _drun)
+check("demo-stop 复位 in_progress", "in_progress" in _dstop and "pending" in _dstop)
+check("demo-run 等 mock 就绪而非固定 sleep",
+      "connect_ex" in _drun and "sleep 1\n" not in _drun)
+
 print(f"\n结果：{ok} passed, {fail} failed")
 shutil.rmtree(T, ignore_errors=True)
 sys.exit(1 if fail else 0)
